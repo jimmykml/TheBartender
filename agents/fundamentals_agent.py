@@ -1,6 +1,10 @@
 from tools.fundamentals_data import get_fundamental_metrics
 
 class FundamentalsAgent():
+
+    def __init__(self, model):
+        self.model = model
+
     def run(self, ticker: str, **kwargs):
         # Step 1: Fetch fundamental data
         metrics = get_fundamental_metrics(ticker)

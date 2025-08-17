@@ -56,6 +56,27 @@ Here’s what happens when you pull up a stool:
 
 ---
 
+## 🧠 Agent Collaboration Diagram
+
+Here's how The Bartender's agents work together behind the scenes:
+
+![Agent Flowchart](./assets/architecture.png)
+
+---
+
+## 🧠 Agent Describtion
+
+| Agent                    | Focus                                       | Description                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 📊 **QuantAgent**        | **Short-Term**                              | Performs technical analysis (RSI, MACD, trends, volatility) based on recent price history (7–30 days) to assess momentum and short-term signals                                    |
+| 📰 **NewsAgent**         | **Primarily Short-Term**, but supports both | Analyzes recent news, sentiment, and events — great for immediate impact (e.g., earnings, lawsuits, Fed meetings) but can also flag long-term narratives (e.g., leadership change) |
+| 📚 **FundamentalsAgent** | **Long-Term**                               | Analyzes company fundamentals like earnings growth, margins, debt, DCF valuation — all key to long-term investment decisions (3+ months to years)                                  |
+| 🧠 **RecommenderAgent**  | **Both**                                    | Synthesizes all agent outputs into a clear short-term and long-term recommendation with rationale                                                                                  |
+| 🧭 **PlannerAgent**      | -                                           | Just orchestrates; doesn't analyze directly                                                                                                                                        |
+
+
+
+
 ## 🚧 Coming Soon
 
 - Portfolio insights (“You’re 80% in tech. Bold move.”)  
