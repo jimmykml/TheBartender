@@ -1,0 +1,34 @@
+[project]
+name = "the-bartender"
+version = "0.1.0"
+description = "Multi-agent stock analysis system"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic-ai",
+    "pydantic-settings",
+    "yfinance",
+    "pandas",
+    "requests",
+    "httpx",
+    "tavily-python",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+google = ["google-generativeai"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "streamlit>=1.40.0",
+]

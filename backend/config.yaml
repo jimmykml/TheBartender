@@ -1,0 +1,11 @@
+# ── LLM ───────────────────────────────────────────────────────────────────────
+default_provider: openai   # openai | anthropic | google
+default_model: gpt-4o-mini
+
+# ── News ──────────────────────────────────────────────────────────────────────
+# Available: finnhub, marketaux
+news_sources:
+  - finnhub
+
+# ── App ───────────────────────────────────────────────────────────────────────
+app_debug: false
