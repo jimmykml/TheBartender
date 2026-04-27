@@ -18,6 +18,54 @@ The system supports five core user goals:
 - **Deterministic tools**: retrieval and calculations live in tools/clients, not in free-form agent reasoning.
 - **Structured outputs**: all intermediate results use Pydantic models.
 - **Multi-provider LLM access**: model/provider selection is abstracted behind shared infra.
+- **Fixed v1 workflows**: the supervisor chooses one predefined workflow instead of freely inventing plans.
+
+---
+
+## Workflow Layer
+
+The v1 request path is:
+
+```text
+User query
+→ Supervisor detects intent
+→ Supervisor selects one fixed workflow
+→ Workflow executes predefined steps
+→ Supervisor returns the workflow result
+```
+
+The supervisor maps intent to exactly one workflow:
+- `news` → News Workflow
+- `fiscal` → Fiscal Workflow
+- `valuation` → Valuation Workflow
+- `driver` → Driver Workflow
+- `recommendation` → Recommendation Workflow
+
+If multiple intents are present, the broader workflow wins:
+
+```text
+Recommendation > Driver > Valuation > Fiscal > News
+```
+
+Every workflow returns the same contract:
+- `workflow_name`
+- `ticker`
+- `company_name`
+- `user_intent`
+- `selected_agents`
+- `execution_status`
+- `agent_outputs`
+- `missing_data_warnings`
+- `confidence_summary`
+- `final_response_payload`
+
+### Implemented v1 workflows
+
+- News Workflow: runs News Agent for the requested ticker and time window.
+- Fiscal Workflow: runs Fiscal Agent for the requested ticker.
+- Valuation Workflow: runs Valuation Agent, which uses deterministic valuation tools.
+- Driver Workflow: runs News Agent for context and returns warnings for missing price-driver infrastructure until Driver Agent and market/sector tools are implemented.
+- Recommendation Workflow: runs News, Fiscal, and Valuation agents, then returns warnings until deterministic scoring and Recommendation Agent are implemented.
 
 ---
 
@@ -207,6 +255,15 @@ These are not standalone agents.
 - DCF / fair value band
 - peer comparison
 - historical valuation range checks
+
+**v1 implementation scope:**
+- Source fundamentals and market data from `yfinance`.
+- Source the risk-free-rate input from FRED's 10-year Treasury series when available, with a fixed fallback for offline runs.
+- Use a manual peer ticker map for common large-cap names.
+- Compute DCF from positive free cash flow, capped historical FCF growth, an 8-12% discount-rate heuristic, and a 2.5% terminal growth assumption.
+- Compute relative value from peer median P/E, P/S, and EV/EBITDA where available.
+- Compute reverse DCF by solving for the growth rate implied by the current stock price.
+- Let the Valuation Agent explain the deterministic output; do not let it invent valuation math.
 
 ### Recommendation Scoring Engine
 - weighted scoring

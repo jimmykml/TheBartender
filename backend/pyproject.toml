@@ -8,6 +8,7 @@ dependencies = [
     "pydantic-settings",
     "yfinance",
     "pandas",
+    "pyyaml",
     "requests",
     "httpx",
     "tavily-python",
@@ -30,5 +31,7 @@ pythonpath = ["."]
 dev = [
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
+    "pytest",
+    "pytest-asyncio",
     "streamlit>=1.40.0",
 ]

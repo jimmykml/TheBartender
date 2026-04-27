@@ -4498,6 +4498,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pydantic-ai" },
     { name = "pydantic-settings" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "tavily-python" },
     { name = "uvicorn", extra = ["standard"] },
@@ -4517,6 +4518,8 @@ google = [
 dev = [
     { name = "ipykernel" },
     { name = "jupyter" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "streamlit" },
 ]
 
@@ -4530,6 +4533,7 @@ requires-dist = [
     { name = "pydantic-settings" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
+    { name = "pyyaml" },
     { name = "requests" },
     { name = "tavily-python" },
     { name = "uvicorn", extras = ["standard"] },
@@ -4541,6 +4545,8 @@ provides-extras = ["google", "dev"]
 dev = [
     { name = "ipykernel", specifier = ">=7.2.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "streamlit", specifier = ">=1.40.0" },
 ]
 

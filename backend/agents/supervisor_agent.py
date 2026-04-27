@@ -1,174 +1,169 @@
-import asyncio
 import logging
-from typing import Any
 
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.usage import RunUsage
 
-from agents.base_agent import BaseAgent
 from clients.llm import build_model
-from models.domain import AgentName
-from models.outputs import AgentResult, ExecutionPlan, SupervisorResult
+from models.domain import UserIntent
+from models.outputs import WorkflowResult
 from models.requests import AnalysisRequest
-from prompts.supervisor_agent_prompts import SYSTEM
+from workflows.fiscal_summary import run_fiscal_workflow
+from workflows.news import run_news_workflow
+from workflows.price_driver import run_driver_workflow
+from workflows.recommendation import run_recommendation_workflow
+from workflows.valuation import run_valuation_workflow
 
 logger = logging.getLogger(__name__)
 
-# Registry maps AgentName → BaseAgent subclass.
-# Add entries here as agents are implemented.
-_REGISTRY: dict[AgentName, type[BaseAgent[Any]]] = {}
 
-try:
-    from agents.news_agent import NewsAgent
-    _REGISTRY[AgentName.NEWS] = NewsAgent
-except ImportError:
-    pass
-
-try:
-    from agents.driver_agent import DriverAgent
-    _REGISTRY[AgentName.DRIVER] = DriverAgent
-except ImportError:
-    pass
-
-try:
-    from agents.fiscal_agent import FiscalAgent
-    _REGISTRY[AgentName.FISCAL] = FiscalAgent
-except ImportError:
-    pass
-
-try:
-    from agents.valuation_agent import ValuationAgent
-    _REGISTRY[AgentName.VALUATION] = ValuationAgent
-except ImportError:
-    pass
-
-try:
-    from agents.recommendation_agent import RecommendationAgent
-    _REGISTRY[AgentName.RECOMMENDATION] = RecommendationAgent
-except ImportError:
-    pass
+class _TickerResult(BaseModel):
+    ticker: str = Field(
+        description="Uppercase stock ticker symbol extracted from the question, e.g. 'NVDA'. "
+                    "Empty string if no ticker is found."
+    )
 
 
 class SupervisorAgent:
     """
-    Plans and orchestrates specialist agents for a given AnalysisRequest.
+    Deterministic v1 supervisor.
 
     Flow:
-      1. LLM planner produces an ExecutionPlan (which agents, why).
-      2. Parallel agents run concurrently via asyncio.gather.
-      3. If needs_recommendation, RecommendationAgent runs last with all prior outputs.
+      1. Detect one user intent with fixed priority rules.
+      2. Select the matching predefined workflow.
+      3. Execute that workflow.
+      4. Return the workflow's standard output contract.
     """
 
     def __init__(self, provider: str | None = None, model: str | None = None) -> None:
         self._provider = provider
         self._model = model
-        self._planner: Agent[None, ExecutionPlan] = Agent(
-            build_model(provider, model),
-            output_type=ExecutionPlan,
-            system_prompt=SYSTEM,
-        )
         self._last_usage: list[RunUsage] = []
 
-    async def run(self, request: AnalysisRequest) -> SupervisorResult:
-        self._last_usage.clear()
-
-        plan = await self._plan(request)
-        logger.info(
-            "Plan for %s: agents=%s recommend=%s",
-            request.ticker,
-            plan.parallel_agents,
-            plan.needs_recommendation,
+    async def _resolve_ticker(self, question: str, hint: str) -> str:
+        """Use a small LLM call to extract the ticker from the raw question."""
+        if not question.strip():
+            return hint
+        extractor: Agent[None, _TickerResult] = Agent(
+            build_model(self._provider, self._model),
+            output_type=_TickerResult,
+            system_prompt=(
+                "Extract the stock ticker symbol from the user's question. "
+                "Return only the uppercase ticker (e.g. NVDA, AAPL, TSLA). "
+                "Return an empty string if no ticker is mentioned."
+            ),
         )
+        try:
+            result = await extractor.run(question)
+            self._last_usage.append(result.usage())
+            ticker = result.output.ticker.strip().upper()
+            return ticker or hint
+        except Exception:
+            return hint
 
-        results = await self._execute_parallel(plan, request)
+    async def run(self, request: AnalysisRequest) -> WorkflowResult:
+        self._last_usage.clear()
+        ticker = await self._resolve_ticker(request.question, request.ticker)
+        if not ticker:
+            raise ValueError(
+                "No stock ticker found in your question. "
+                "Please mention one, e.g. 'Should I buy NVDA?'"
+            )
+        request = request.model_copy(update={"ticker": ticker})
+        intent = self._detect_intent(request)
+        logger.info("Selected %s workflow for %s", intent, request.ticker)
 
-        if plan.needs_recommendation and AgentName.RECOMMENDATION in _REGISTRY:
-            rec_result = await self._run_recommendation(plan, request, results)
-            results.append(rec_result)
+        match intent:
+            case UserIntent.RECOMMENDATION:
+                run = await run_recommendation_workflow(request, self._provider, self._model)
+            case UserIntent.DRIVER:
+                run = await run_driver_workflow(request, self._provider, self._model)
+            case UserIntent.VALUATION:
+                run = await run_valuation_workflow(request, self._provider, self._model)
+            case UserIntent.FISCAL:
+                run = await run_fiscal_workflow(request, self._provider, self._model)
+            case UserIntent.NEWS:
+                run = await run_news_workflow(request, self._provider, self._model)
 
-        return SupervisorResult(ticker=request.ticker, plan=plan, results=results)
+        self._last_usage.extend(run.usages)
+        return run.result
 
     def usage(self) -> list[RunUsage]:
         """Token usage across all LLM calls in the last run."""
         return self._last_usage
 
-    # ── private ──────────────────────────────────────────────────────────────
+    def _detect_intent(self, request: AnalysisRequest) -> UserIntent:
+        text = " ".join(
+            part for part in [request.question, request.focus, str(request.time_horizon)] if part
+        ).lower()
 
-    async def _plan(self, request: AnalysisRequest) -> ExecutionPlan:
-        prompt = (
-            f"Ticker: {request.ticker}\n"
-            f"Time horizon: {request.time_horizon}\n"
-            f"Focus: {request.focus or 'general analysis'}"
-        )
-        result = await self._planner.run(prompt)
-        self._last_usage.append(result.usage())
-        return result.output
+        # Priority order: Recommendation > Driver > Valuation > Fiscal > News.
+        if _contains_any(text, _RECOMMENDATION_TERMS):
+            return UserIntent.RECOMMENDATION
+        if _contains_any(text, _DRIVER_TERMS):
+            return UserIntent.DRIVER
+        if _contains_any(text, _VALUATION_TERMS):
+            return UserIntent.VALUATION
+        if _contains_any(text, _FISCAL_TERMS):
+            return UserIntent.FISCAL
+        return UserIntent.NEWS
 
-    async def _execute_parallel(
-        self, plan: ExecutionPlan, request: AnalysisRequest
-    ) -> list[AgentResult]:
-        tasks = [
-            self._run_agent(name, request)
-            for name in plan.parallel_agents
-            if name != AgentName.RECOMMENDATION
-        ]
-        return list(await asyncio.gather(*tasks))
 
-    async def _run_agent(
-        self, name: AgentName, request: AnalysisRequest
-    ) -> AgentResult:
-        cls = _REGISTRY.get(name)
-        if cls is None:
-            return AgentResult(
-                agent=name,
-                output={},
-                success=False,
-                error=f"{name} agent not implemented yet",
-            )
-        try:
-            agent: BaseAgent[Any] = cls(provider=self._provider, model=self._model)
-            output = await agent.run_from_inputs(ticker=request.ticker)
-            if hasattr(agent, "usage") and agent.usage():
-                self._last_usage.append(agent.usage())  # type: ignore[arg-type]
-            return AgentResult(
-                agent=name,
-                output=output.model_dump(),
-                success=True,
-            )
-        except Exception as exc:
-            logger.exception("Agent %s failed: %s", name, exc)
-            return AgentResult(agent=name, output={}, success=False, error=str(exc))
+def _contains_any(text: str, terms: set[str]) -> bool:
+    return any(term in text for term in terms)
 
-    async def _run_recommendation(
-        self,
-        plan: ExecutionPlan,
-        request: AnalysisRequest,
-        prior: list[AgentResult],
-    ) -> AgentResult:
-        summaries = "\n\n".join(
-            f"[{r.agent}]\n{r.output}" for r in prior if r.success
-        )
-        prompt = (
-            f"Ticker: {request.ticker}\n"
-            f"Time horizon: {plan.time_horizon}\n\n"
-            f"Research inputs:\n{summaries}"
-        )
-        cls = _REGISTRY[AgentName.RECOMMENDATION]
-        agent: BaseAgent[Any] = cls(provider=self._provider, model=self._model)
-        try:
-            output = await agent.run(prompt)
-            if hasattr(agent, "usage") and agent.usage():
-                self._last_usage.append(agent.usage())  # type: ignore[arg-type]
-            return AgentResult(
-                agent=AgentName.RECOMMENDATION,
-                output=output.model_dump(),
-                success=True,
-            )
-        except Exception as exc:
-            logger.exception("RecommendationAgent failed: %s", exc)
-            return AgentResult(
-                agent=AgentName.RECOMMENDATION,
-                output={},
-                success=False,
-                error=str(exc),
-            )
+
+_RECOMMENDATION_TERMS = {
+    "should i buy",
+    "should i sell",
+    "buy",
+    "sell",
+    "hold",
+    "recommend",
+    "recommendation",
+    "investment",
+    "worth buying",
+    "invest",
+}
+
+_DRIVER_TERMS = {
+    "why did",
+    "what drove",
+    "driver",
+    "dropped",
+    "drop",
+    "fell",
+    "fall",
+    "skyrocket",
+    "spike",
+    "surge",
+    "move",
+    "moved",
+    "after earnings",
+}
+
+_VALUATION_TERMS = {
+    "valuation",
+    "value",
+    "valued",
+    "undervalued",
+    "overvalued",
+    "expensive",
+    "cheap",
+    "fair value",
+    "intrinsic",
+}
+
+_FISCAL_TERMS = {
+    "earnings",
+    "fiscal",
+    "filing",
+    "10-q",
+    "10-k",
+    "8-k",
+    "financial results",
+    "financial report",
+    "quarter",
+    "revenue",
+    "margin",
+}

@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_ai import Agent
 
+from agents.supervisor_agent import SupervisorAgent
 from agents.news_agent import NewsAgent
 from agents.fiscal_agent import FiscalAgent
 from app.config import get_settings
 from clients.llm import build_model
 from core.usage_tracker import compute_cost
+from models.requests import AnalysisRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,14 +38,32 @@ class FiscalRequest(BaseModel):
     ticker: str
 
 
-class FiscalAskRequest(BaseModel):
+class AskRequest(BaseModel):
     question: str
-    report_context: str
+    context: str
+
+
+def _usage_list(agent: SupervisorAgent) -> list[dict]:
+    settings = get_settings()
+    model_name = settings.default_model
+    return [compute_cost(model_name, usage).model_dump() for usage in agent.usage()]
 
 
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/api/v1/analyze")
+async def analyze(req: AnalysisRequest) -> dict:
+    try:
+        normalized = req.model_copy(update={"ticker": req.ticker.upper()})
+        agent = SupervisorAgent()
+        result = await agent.run(normalized)
+        return {"data": result.model_dump(), "usage": _usage_list(agent)}
+    except Exception as e:
+        logger.error("analyze failed:\n%s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/v1/news")
@@ -74,8 +94,8 @@ async def analyze_fiscal(req: FiscalRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/v1/fiscal/ask")
-async def ask_fiscal(req: FiscalAskRequest) -> dict:
+@app.post("/api/v1/ask")
+async def ask(req: AskRequest) -> dict:
     try:
         settings = get_settings()
         model_name = settings.default_model
@@ -83,13 +103,13 @@ async def ask_fiscal(req: FiscalAskRequest) -> dict:
             build_model(),
             system_prompt=(
                 "You are a financial analyst. Answer questions concisely and precisely "
-                "based only on the financial report provided. Cite specific numbers.\n\n"
-                f"--- FINANCIAL REPORT ---\n{req.report_context}"
+                "based only on the context provided. Cite specific numbers where relevant.\n\n"
+                f"--- CONTEXT ---\n{req.context}"
             ),
         )
         result = await agent.run(req.question)
         usage = compute_cost(model_name, result.usage())
         return {"answer": result.output, "usage": usage.model_dump()}
     except Exception as e:
-        logger.error("ask_fiscal failed:\n%s", traceback.format_exc())
+        logger.error("ask failed:\n%s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))

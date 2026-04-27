@@ -1,6 +1,6 @@
 from typing import Any, Literal
 from pydantic import BaseModel, Field
-from models.domain import AgentName, TimeHorizon
+from models.domain import AgentName, TimeHorizon, UserIntent, WorkflowName
 
 
 class NewsItem(BaseModel):
@@ -41,6 +41,89 @@ class FiscalAnalysis(BaseModel):
     report_context: str = Field(default="", description="Raw financial data for follow-up Q&A")
 
 
+# ── Valuation types ──────────────────────────────────────────────────────────
+
+class DCFValuation(BaseModel):
+    intrinsic_value_per_share: float
+    projected_fcf_growth: float = Field(description="Annual FCF growth assumption, e.g. 0.08 for 8%")
+    discount_rate: float = Field(description="Discount rate assumption, e.g. 0.10 for 10%")
+    terminal_growth_rate: float = Field(description="Terminal growth assumption, e.g. 0.025 for 2.5%")
+    enterprise_value: float
+    equity_value: float
+
+
+class RelativeValuation(BaseModel):
+    implied_value_per_share: float | None = None
+    peer_tickers: list[str] = Field(default_factory=list)
+    peer_median_pe: float | None = None
+    peer_median_ps: float | None = None
+    peer_median_ev_ebitda: float | None = None
+    method_values: dict[str, float] = Field(default_factory=dict)
+
+
+class ReverseDCFValuation(BaseModel):
+    implied_growth_rate: float | None = Field(
+        default=None,
+        description="Growth rate implied by current price, e.g. 0.12 for 12%",
+    )
+    realistic_growth_rate: float
+    verdict: Literal["conservative", "reasonable", "aggressive", "unavailable"]
+
+
+class ValuationAnalysis(BaseModel):
+    ticker: str
+    valuation_view: Literal["undervalued", "fairly_valued", "overvalued"]
+    current_price: float
+    intrinsic_value_per_share: float
+    margin_of_safety: float = Field(description="Intrinsic value premium/discount vs current price")
+    summary: str = Field(description="3-4 sentence valuation summary")
+    dcf: DCFValuation
+    relative: RelativeValuation
+    reverse_dcf: ReverseDCFValuation
+    key_assumptions: list[str] = Field(default_factory=list)
+    key_risks: list[str] = Field(default_factory=list)
+    valuation_context: str = Field(default="", description="Raw valuation data and calculations")
+
+
+# ── Driver types ─────────────────────────────────────────────────────────────
+
+class DriverAnalysis(BaseModel):
+    ticker: str
+    period: str = Field(description="Analysis window, e.g. 'Mar 17–Mar 18 2025'")
+    price_change_pct: float = Field(description="Percentage price change, e.g. 0.08 for 8%")
+    primary_driver: str = Field(description="One-line attribution, e.g. 'Earnings beat + short squeeze'")
+    summary: str = Field(description="3-4 sentence narrative explanation of the move")
+    fundamental_factors: list[str] = Field(default_factory=list)
+    technical_factors: list[str] = Field(default_factory=list)
+    macro_factors: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    price_context: str = Field(default="", description="Raw price/technical data used for analysis")
+
+
+# ── Recommendation types ──────────────────────────────────────────────────────
+
+class ScoreComponent(BaseModel):
+    component: str
+    score: float = Field(ge=-1.0, le=1.0, description="Score from -1 (bearish) to +1 (bullish)")
+    weight: float = Field(ge=0.0, le=1.0)
+    note: str
+
+
+class RecommendationAnalysis(BaseModel):
+    ticker: str
+    action: Literal["buy", "hold", "sell"]
+    short_term_verdict: Literal["buy", "hold", "sell"]
+    long_term_verdict: Literal["buy", "hold", "sell"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    composite_score: float = Field(default=0.0, description="Weighted composite score -1 to +1")
+    rationale: str = Field(description="4-5 sentence investment thesis")
+    bull_case: list[str] = Field(default_factory=list)
+    bear_case: list[str] = Field(default_factory=list)
+    key_catalysts: list[str] = Field(default_factory=list)
+    risk_factors: list[str] = Field(default_factory=list)
+    scores: list[ScoreComponent] = Field(default_factory=list, description="Deterministic component scores")
+
+
 # ── Supervisor types ─────────────────────────────────────────────────────────
 
 class ExecutionPlan(BaseModel):
@@ -60,6 +143,19 @@ class AgentResult(BaseModel):
     output: dict[str, Any]
     success: bool
     error: str | None = None
+
+
+class WorkflowResult(BaseModel):
+    workflow_name: WorkflowName
+    ticker: str
+    company_name: str | None = None
+    user_intent: UserIntent
+    selected_agents: list[AgentName] = Field(default_factory=list)
+    execution_status: Literal["success", "partial_success", "failed"]
+    agent_outputs: list[AgentResult] = Field(default_factory=list)
+    missing_data_warnings: list[str] = Field(default_factory=list)
+    confidence_summary: str
+    final_response_payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class SupervisorResult(BaseModel):
